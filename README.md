@@ -150,6 +150,35 @@ client.query(query, bindings: bindings)
 
 For additional information about binding parameters refer to snowflake documentation: https://docs.snowflake.com/en/developer-guide/sql-api/submitting-requests#using-bind-variables-in-a-statement
 
+## Instrumentation
+
+If ActiveSupport is available, this library additionally emits [notification events](https://api.rubyonrails.org/classes/ActiveSupport/Notifications.html) around queries. You can subscribe to those to track timing, query counts, etc.
+
+* `rb_snowflake_client.snowflake_query.finish`: published at query end
+
+Events receive a payload with the following properties:
+* `database`: snowflake database
+* `schema`: snowflake schema
+* `warehouse`: snowflake warehouse
+* `query_id`: random UUID for the query
+* `query_name`: argument passed to query/fetch
+* `exception`: present if the query raised an error, see [Notifications documentation](https://api.rubyonrails.org/classes/ActiveSupport/Notifications.html#module-ActiveSupport::Notifications-label-Subscribers) for details
+* `exception_object`: present if the query raised an error, see [Notifications documentation](https://api.rubyonrails.org/classes/ActiveSupport/Notifications.html#module-ActiveSupport::Notifications-label-Subscribers) for details
+
+An example integration with [Datadog](https://www.rubydoc.info/gems/datadog) might look like this:
+
+```ruby
+ActiveSupport::Notifications.subscribe("rb_snowflake_client.snowflake_query.finish") do |name, start, finish, id, payload|
+  span = Datadog::Tracing.trace(payload[:query_name] || "snowflake_query",
+    resource: "snowflake",
+    start_time: start,
+    tags: payload,
+    type: Datadog::Tracing::Metadata::Ext::AppTypes::TYPE_DB)
+  
+  span.finish(finish)
+end
+```
+
 # Configuration Options
 
 The client supports the following configuration options, each with their own getter/setter except connection pool options which must be set at construction. Additionally, all except logger can be configured with environment variables (see above, but the pattern is like: "SNOWFLAKE_HTTP_RETRIES". Configuration options can only be set on initialization through `new` or `from_env`.
