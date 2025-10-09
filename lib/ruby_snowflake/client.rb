@@ -55,8 +55,6 @@ module RubySnowflake
     DEFAULT_THREAD_SCALE_FACTOR = 4
     # how many times to retry common retryable HTTP responses (i.e. 429, 504)
     DEFAULT_HTTP_RETRIES = 2
-    # how long to wait to allow a query to complete, in seconds
-    DEFAULT_QUERY_TIMEOUT = 600 # 10 minutes
     # default role to use
     DEFAULT_ROLE = nil
 
@@ -76,7 +74,7 @@ module RubySnowflake
                       max_threads_per_query: env_option("SNOWFLAKE_MAX_THREADS_PER_QUERY", DEFAULT_MAX_THREADS_PER_QUERY),
                       thread_scale_factor: env_option("SNOWFLAKE_THREAD_SCALE_FACTOR", DEFAULT_THREAD_SCALE_FACTOR),
                       http_retries: env_option("SNOWFLAKE_HTTP_RETRIES", DEFAULT_HTTP_RETRIES),
-                      query_timeout: env_option("SNOWFLAKE_QUERY_TIMEOUT", DEFAULT_QUERY_TIMEOUT),
+                      query_timeout: env_option("SNOWFLAKE_QUERY_TIMEOUT", nil),
                       default_role: env_option("SNOWFLAKE_DEFAULT_ROLE", DEFAULT_ROLE))
       private_key =
         if key = ENV["SNOWFLAKE_PRIVATE_KEY"]
@@ -119,7 +117,7 @@ module RubySnowflake
       max_threads_per_query: DEFAULT_MAX_THREADS_PER_QUERY,
       thread_scale_factor: DEFAULT_THREAD_SCALE_FACTOR,
       http_retries: DEFAULT_HTTP_RETRIES,
-      query_timeout: DEFAULT_QUERY_TIMEOUT
+      query_timeout: nil
     )
       @base_uri = uri
       @key_pair_jwt_auth_manager =
@@ -143,12 +141,12 @@ module RubySnowflake
       @_enable_polling_queries = false
     end
 
-    def query(query, warehouse: nil, streaming: false, database: nil, schema: nil, bindings: nil, role: nil)
+    def query(query, warehouse: nil, streaming: false, database: nil, schema: nil, bindings: nil, role: nil, query_timeout: nil, parameters: nil)
       warehouse ||= @default_warehouse
       database ||= @default_database
       role ||= @default_role
+      query_timeout ||= @query_timeout
 
-      query_start_time = Time.now.to_i
       response = nil
       connection_pool.with do |connection|
         request_body = {
@@ -160,6 +158,12 @@ module RubySnowflake
           "role" => role
         }
 
+        # Add server-side timeout if specified
+        request_body["timeout"] = query_timeout.to_i if query_timeout
+
+        # Add additional parameters if provided
+        request_body["parameters"] = parameters if parameters
+
         response = request_with_auth_and_headers(
           connection,
           Net::HTTP::Post,
@@ -167,7 +171,7 @@ module RubySnowflake
           request_body.to_json
         )
       end
-      retrieve_result_set(query_start_time, query, response, streaming)
+      retrieve_result_set(response, streaming)
     end
 
     alias fetch query
@@ -205,7 +209,6 @@ module RubySnowflake
         request = request_class.new(uri)
         request["Content-Type"] = "application/json"
         request["Accept"] = "application/json"
-        request["Authorization"] = "Bearer #{@key_pair_jwt_auth_manager.jwt_token}"
         request["X-Snowflake-Authorization-Token-Type"] = "KEYPAIR_JWT"
         request.body = body unless body.nil?
 
@@ -213,6 +216,7 @@ module RubySnowflake
                             sleep: lambda {|n| 2**n }, # 1, 2, 4, 8, etc
                             on: [RetryableBadResponseError, OpenSSL::SSL::SSLError],
                             log_method: retryable_log_method) do
+          request["Authorization"] = "Bearer #{@key_pair_jwt_auth_manager.jwt_token}"
           response = nil
           bm = Benchmark.measure { response = connection.request(request) }
           logger.debug { "HTTP Request time: #{bm.real}" }
@@ -225,7 +229,7 @@ module RubySnowflake
         return if VALID_RESPONSE_CODES.include? response.code
 
         # there are a class of errors we want to retry rather than just giving up
-        if retryable_http_response_code?(response.code)
+        if retryable_http_response_code?(response.code) && !server_side_timeout?(response.body)
           raise RetryableBadResponseError,
                 "Retryable bad response! Got code: #{response.code}, w/ message #{response.body}"
 
@@ -233,6 +237,10 @@ module RubySnowflake
           raise BadResponseError,
             "Bad response! Got code: #{response.code}, w/ message #{response.body}"
         end
+      end
+
+      def server_side_timeout?(response_body)
+        response_body&.include?("Statement reached its statement or warehouse timeout")
       end
 
       # shamelessly stolen from the battle tested python client
@@ -251,18 +259,12 @@ module RubySnowflake
         end
       end
 
-      def poll_for_completion_or_timeout(query_start_time, query, statement_handle)
+      def poll_for_completion_or_timeout(statement_handle)
         first_data_json_body = nil
 
         connection_pool.with do |connection|
           loop do
             sleep POLLING_INTERVAL
-
-            elapsed_time = Time.now.to_i - query_start_time
-            if elapsed_time > @query_timeout
-              cancelled = attempt_to_cancel_and_silence_errors(connection, statement_handle)
-              raise QueryTimeoutError.new("Query timed out. Query cancelled? #{cancelled}; Duration: #{elapsed_time}; Query: '#{query}'")
-            end
 
             poll_response = request_with_auth_and_headers(connection, Net::HTTP::Get,
                                                           "/api/v2/statements/#{statement_handle}")
@@ -275,24 +277,13 @@ module RubySnowflake
         end
       end
 
-      def attempt_to_cancel_and_silence_errors(connection, statement_handle)
-        cancel_response = request_with_auth_and_headers(connection, Net::HTTP::Post,
-                                                        "/api/v2/#{statement_handle}/cancel")
-        true
-      rescue Error => error
-        if error.is_a?(BadResponseError) && error.message.include?("404")
-          return true # snowflake cancelled it before we did
-        end
-        @logger.error("Error on attempting to cancel query #{statement_handle}, will raise a QueryTimeoutError")
-        false
-      end
 
-      def retrieve_result_set(query_start_time, query, response, streaming)
+      def retrieve_result_set(response, streaming)
         json_body = JSON.parse(response.body, JSON_PARSE_OPTIONS)
         statement_handle = json_body["statementHandle"]
 
         if response.code == POLLING_RESPONSE_CODE
-          result_response = poll_for_completion_or_timeout(query_start_time, query, statement_handle)
+          result_response = poll_for_completion_or_timeout(statement_handle)
           json_body = JSON.parse(result_response.body, JSON_PARSE_OPTIONS)
         end
 
