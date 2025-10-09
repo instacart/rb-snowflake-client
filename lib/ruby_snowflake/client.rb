@@ -229,7 +229,7 @@ module RubySnowflake
         return if VALID_RESPONSE_CODES.include? response.code
 
         # there are a class of errors we want to retry rather than just giving up
-        if retryable_http_response_code?(response.code)
+        if retryable_http_response_code?(response.code) && !server_side_timeout?(response.body)
           raise RetryableBadResponseError,
                 "Retryable bad response! Got code: #{response.code}, w/ message #{response.body}"
 
@@ -237,6 +237,10 @@ module RubySnowflake
           raise BadResponseError,
             "Bad response! Got code: #{response.code}, w/ message #{response.body}"
         end
+      end
+
+      def server_side_timeout?(response_body)
+        response_body&.include?("Statement reached its statement or warehouse timeout")
       end
 
       # shamelessly stolen from the battle tested python client
