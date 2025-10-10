@@ -46,6 +46,15 @@ module RubySnowflake
   class RequestError < Error ; end
   class QueryTimeoutError < Error ;  end
 
+  class SnowflakeQueryExecutionError < Error
+    attr_reader :request_body
+
+    def initialize(request_body)
+      @request_body = request_body
+      super(request_body)
+    end
+  end
+
   class Client
     DEFAULT_LOGGER = Logger.new(STDOUT)
     DEFAULT_LOG_LEVEL = Logger::INFO
@@ -156,28 +165,36 @@ module RubySnowflake
       role ||= @default_role
       query_timeout ||= @query_timeout
 
-      with_instrumentation({ database:, schema:, warehouse:, query_name: }) do
-        query_start_time = Time.now.to_i
-        response = nil
-        connection_pool.with do |connection|
-          request_body = {
-            "warehouse" => warehouse&.upcase,
-            "schema" => schema&.upcase,
-            "database" =>  database&.upcase,
-            "statement" => query,
-            "bindings" => bindings,
-            "role" => role,
-            "timeout" => query_timeout
-          }
+      response = nil
+      request_body = nil
 
-          response = request_with_auth_and_headers(
-            connection,
-            Net::HTTP::Post,
-            "/api/v2/statements?requestId=#{SecureRandom.uuid}&async=#{@_enable_polling_queries}",
-            request_body.to_json
-          )
+      begin
+        with_instrumentation({ database:, schema:, warehouse:, query_name: }) do
+          query_start_time = Time.now.to_i
+          connection_pool.with do |connection|
+            request_body = {
+              "warehouse" => warehouse&.upcase,
+              "schema" => schema&.upcase,
+              "database" =>  database&.upcase,
+              "statement" => query,
+              "bindings" => bindings,
+              "role" => role
+            }
+
+            # Add server-side timeout if specified
+            request_body["timeout"] = query_timeout.to_i if query_timeout
+
+            response = request_with_auth_and_headers(
+              connection,
+              Net::HTTP::Post,
+              "/api/v2/statements?requestId=#{SecureRandom.uuid}&async=#{@_enable_polling_queries}",
+              request_body.to_json
+            )
+          end
+          retrieve_result_set(query_start_time, query, response, streaming, query_timeout)
         end
-        retrieve_result_set(query_start_time, query, response, streaming, query_timeout)
+      rescue StandardError => e
+        raise SnowflakeQueryExecutionError.new(request_body), e.message, e.backtrace
       end
     end
 
