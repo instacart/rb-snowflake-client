@@ -39,6 +39,15 @@ module RubySnowflake
   class RequestError < Error ; end
   class QueryTimeoutError < Error ;  end
 
+  class SnowflakeQueryExecutionError < Error
+    attr_reader :request_body
+
+    def initialize(request_body)
+      @request_body = request_body
+      super(request_body)
+    end
+  end
+
   class Client
     DEFAULT_LOGGER = Logger.new(STDOUT)
     DEFAULT_LOG_LEVEL = Logger::INFO
@@ -155,30 +164,36 @@ module RubySnowflake
       query_timeout ||= @query_timeout
 
       response = nil
-      connection_pool.with do |connection|
-        request_body = {
-          "warehouse" => warehouse&.upcase,
-          "schema" => schema&.upcase,
-          "database" =>  database&.upcase,
-          "statement" => query,
-          "bindings" => bindings,
-          "role" => role
-        }
+      request_body = nil
 
-        # Add server-side timeout if specified
-        request_body["timeout"] = query_timeout.to_i if query_timeout
+      begin
+        connection_pool.with do |connection|
+          request_body = {
+            "warehouse" => warehouse&.upcase,
+            "schema" => schema&.upcase,
+            "database" =>  database&.upcase,
+            "statement" => query,
+            "bindings" => bindings,
+            "role" => role
+          }
 
-        # Add additional parameters if provided
-        request_body["parameters"] = parameters if parameters
+          # Add server-side timeout if specified
+          request_body["timeout"] = query_timeout.to_i if query_timeout
 
-        response = request_with_auth_and_headers(
-          connection,
-          Net::HTTP::Post,
-          "/api/v2/statements?requestId=#{SecureRandom.uuid}&async=#{@_enable_polling_queries}",
-          request_body.to_json
-        )
+          # Add additional parameters if provided
+          request_body["parameters"] = parameters if parameters
+
+          response = request_with_auth_and_headers(
+            connection,
+            Net::HTTP::Post,
+            "/api/v2/statements?requestId=#{SecureRandom.uuid}&async=#{@_enable_polling_queries}",
+            request_body.to_json
+          )
+        end
+        retrieve_result_set(response, streaming)
+      rescue StandardError => e
+        raise SnowflakeQueryExecutionError.new(request_body), e.message, e.backtrace
       end
-      retrieve_result_set(response, streaming)
     end
 
     alias fetch query
