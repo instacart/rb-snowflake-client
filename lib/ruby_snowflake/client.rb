@@ -46,12 +46,12 @@ module RubySnowflake
   class RequestError < Error ; end
   class QueryTimeoutError < Error ;  end
 
-  class SnowflakeQueryExecutionError < Error
+  class SnowflakeQueryExecutionError < StandardError
     attr_reader :request_body
 
-    def initialize(request_body)
+    def initialize(message, request_body)
+      super(message)
       @request_body = request_body
-      super(request_body)
     end
   end
 
@@ -194,7 +194,9 @@ module RubySnowflake
           retrieve_result_set(query_start_time, query, response, streaming, query_timeout)
         end
       rescue StandardError => e
-        raise SnowflakeQueryExecutionError.new(request_body), e.message, e.backtrace
+        error = SnowflakeQueryExecutionError.new(e.message, request_body)
+        error.set_backtrace(e.backtrace)
+        raise error
       end
     end
 
