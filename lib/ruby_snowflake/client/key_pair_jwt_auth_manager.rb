@@ -24,8 +24,10 @@ module RubySnowflake
         return @token unless jwt_token_expired?
 
         @token_semaphore.acquire do
+          # double check in case another thread updated the token
+          return @token unless jwt_token_expired?
           now = Time.now.to_i
-          @token_expires_at = now + @jwt_token_ttl
+          expires_at = now + @jwt_token_ttl
 
           private_key = OpenSSL::PKey.read(@private_key_pem)
 
@@ -33,10 +35,13 @@ module RubySnowflake
             :iss => "#{account_name}.#{@user.upcase}.#{public_key_fingerprint}",
             :sub => "#{account_name}.#{@user.upcase}",
             :iat => now,
-            :exp => @token_expires_at
+            :exp => expires_at
           }
-
+          sleep(0.2)
           @token = JWT.encode payload, private_key, "RS256"
+          # update the token expires at after the token is updated
+          @token_expires_at = expires_at
+          @token
         end
       end
 
