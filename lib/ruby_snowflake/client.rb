@@ -185,11 +185,9 @@ module RubySnowflake
               "database" =>  database&.upcase,
               "statement" => query,
               "bindings" => bindings,
-              "role" => role
+              "role" => role,
+              "timeout" => query_timeout
             }
-
-            # Add server-side timeout if specified
-            request_body["timeout"] = query_timeout.to_i if query_timeout
 
             response = request_with_auth_and_headers(
               connection,
