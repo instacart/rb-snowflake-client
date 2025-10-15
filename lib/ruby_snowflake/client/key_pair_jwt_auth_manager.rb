@@ -37,7 +37,7 @@ module RubySnowflake
             :iat => now,
             :exp => expires_at
           }
-          
+
           @token = JWT.encode payload, private_key, "RS256"
           # update the token expires at after the token is updated
           @token_expires_at = expires_at
