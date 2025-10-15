@@ -243,7 +243,6 @@ module RubySnowflake
         request = request_class.new(uri)
         request["Content-Type"] = "application/json"
         request["Accept"] = "application/json"
-        request["Authorization"] = "Bearer #{@key_pair_jwt_auth_manager.jwt_token}"
         request["X-Snowflake-Authorization-Token-Type"] = "KEYPAIR_JWT"
         request.body = body unless body.nil?
 
@@ -251,6 +250,7 @@ module RubySnowflake
                             sleep: lambda {|n| 2**n }, # 1, 2, 4, 8, etc
                             on: [RetryableBadResponseError, OpenSSL::SSL::SSLError],
                             log_method: retryable_log_method) do
+          request["Authorization"] = "Bearer #{@key_pair_jwt_auth_manager.jwt_token}"
           response = nil
           bm = Benchmark.measure { response = connection.request(request) }
           logger.debug { "HTTP Request time: #{bm.real}" }
