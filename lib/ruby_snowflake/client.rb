@@ -75,6 +75,8 @@ module RubySnowflake
     DEFAULT_QUERY_TIMEOUT = 600 # 10 minutes
     # default role to use
     DEFAULT_ROLE = nil
+    # default schema to use
+    DEFAULT_SCHEMA = nil
 
     JSON_PARSE_OPTIONS = { decimal_class: BigDecimal }.freeze
     VALID_RESPONSE_CODES = %w(200 202).freeze
@@ -82,7 +84,7 @@ module RubySnowflake
     POLLING_INTERVAL = 2 # seconds
 
     # can't be set after initialization
-    attr_reader :connection_timeout, :max_connections, :logger, :max_threads_per_query, :thread_scale_factor, :http_retries, :query_timeout, :default_role
+    attr_reader :connection_timeout, :max_connections, :logger, :max_threads_per_query, :thread_scale_factor, :http_retries, :query_timeout, :default_role, :default_schema
 
     def self.from_env(logger: DEFAULT_LOGGER,
                       log_level: DEFAULT_LOG_LEVEL,
@@ -93,7 +95,8 @@ module RubySnowflake
                       thread_scale_factor: env_option("SNOWFLAKE_THREAD_SCALE_FACTOR", DEFAULT_THREAD_SCALE_FACTOR),
                       http_retries: env_option("SNOWFLAKE_HTTP_RETRIES", DEFAULT_HTTP_RETRIES),
                       query_timeout: env_option("SNOWFLAKE_QUERY_TIMEOUT", DEFAULT_QUERY_TIMEOUT),
-                      default_role: env_option("SNOWFLAKE_DEFAULT_ROLE", DEFAULT_ROLE))
+                      default_role: env_option("SNOWFLAKE_DEFAULT_ROLE", DEFAULT_ROLE),
+                      default_schema: env_option("SNOWFLAKE_DEFAULT_SCHEMA", DEFAULT_SCHEMA))
       private_key =
         if key = ENV["SNOWFLAKE_PRIVATE_KEY"]
           key
@@ -112,6 +115,7 @@ module RubySnowflake
         ENV["SNOWFLAKE_DEFAULT_WAREHOUSE"],
         ENV["SNOWFLAKE_DEFAULT_DATABASE"],
         default_role: ENV.fetch("SNOWFLAKE_DEFAULT_ROLE", nil),
+        default_schema: ENV.fetch("SNOWFLAKE_DEFAULT_SCHEMA", nil),
         logger: logger,
         log_level: log_level,
         jwt_token_ttl: jwt_token_ttl,
@@ -127,6 +131,7 @@ module RubySnowflake
     def initialize(
       uri, private_key, organization, account, user, default_warehouse, default_database,
       default_role: nil,
+      default_schema: nil,
       logger: DEFAULT_LOGGER,
       log_level: DEFAULT_LOG_LEVEL,
       jwt_token_ttl: DEFAULT_JWT_TOKEN_TTL,
@@ -143,6 +148,7 @@ module RubySnowflake
       @default_warehouse = default_warehouse
       @default_database = default_database
       @default_role = default_role
+      @default_schema = default_schema
 
       # set defaults for config settings
       @logger = logger
@@ -163,6 +169,7 @@ module RubySnowflake
       warehouse ||= @default_warehouse
       database ||= @default_database
       role ||= @default_role
+      schema ||= @default_schema
       query_timeout ||= @query_timeout
 
       response = nil
