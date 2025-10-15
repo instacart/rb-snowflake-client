@@ -115,7 +115,7 @@ module RubySnowflake
         ENV["SNOWFLAKE_DEFAULT_WAREHOUSE"],
         ENV["SNOWFLAKE_DEFAULT_DATABASE"],
         default_role: ENV.fetch("SNOWFLAKE_DEFAULT_ROLE", nil),
-        default_schema: ENV["SNOWFLAKE_DEFAULT_SCHEMA"],
+        default_schema: ENV.fetch("SNOWFLAKE_DEFAULT_SCHEMA", nil),
         logger: logger,
         log_level: log_level,
         jwt_token_ttl: jwt_token_ttl,
