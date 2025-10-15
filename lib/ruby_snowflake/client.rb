@@ -165,7 +165,7 @@ module RubySnowflake
       @_enable_polling_queries = false
     end
 
-    def query(query, warehouse: nil, streaming: false, database: nil, schema: nil, bindings: nil, role: nil, query_name: nil, query_timeout: nil)
+    def query(query, warehouse: nil, streaming: false, database: nil, schema: nil, bindings: nil, role: nil, query_name: nil, query_timeout: nil, parameters: nil)
       warehouse ||= @default_warehouse
       database ||= @default_database
       role ||= @default_role
@@ -188,6 +188,9 @@ module RubySnowflake
               "role" => role,
               "timeout" => query_timeout
             }
+
+            # Add additional parameters if provided
+            request_body["parameters"] = parameters if parameters
 
             response = request_with_auth_and_headers(
               connection,
