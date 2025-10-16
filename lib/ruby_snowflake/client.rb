@@ -263,7 +263,7 @@ module RubySnowflake
         return if VALID_RESPONSE_CODES.include? response.code
 
         # there are a class of errors we want to retry rather than just giving up
-        if retryable_http_response_code?(response.code)
+        if retryable_http_response_code?(response.code) && !statement_timeout_error?(response)
           raise RetryableBadResponseError,
                 "Retryable bad response! Got code: #{response.code}, w/ message #{response.body}"
 
@@ -281,6 +281,23 @@ module RubySnowflake
         # anything in the 3xx range as those are mostly "redirect" responses
         [400, 403, 405, 408, 429].include?(code.to_i) || (500..599).include?(code.to_i) ||
          (300..399).include?(code.to_i)
+      end
+
+      def statement_timeout_error?(response)
+        # Don't retry on statement/warehouse timeout errors (error code 000630)
+        # These will just timeout again on retry
+        return false unless response.code.to_i == 408
+        
+        begin
+          body = JSON.parse(response.body, JSON_PARSE_OPTIONS)
+          # Check both error code and message pattern for reliability
+          code_match = body["code"] == "000630"
+          message_match = body["message"]&.match?(/statement.*timeout/i)
+          
+          code_match || message_match
+        rescue JSON::ParserError
+          false
+        end
       end
 
       def retryable_log_method
